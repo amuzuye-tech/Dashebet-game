@@ -1,41 +1,46 @@
 import { prisma } from '@/lib/prisma';
 import { NextRequest, NextResponse } from 'next/server';
 
-export async function GET(request: NextRequest) {
-  const { searchParams } = new URL(request.url);
-  const telegramId = searchParams.get('telegram_id');
-  
-  if (!telegramId) {
-    return NextResponse.json({ error: 'telegram_id required' }, { status: 400 });
-  }
-  
+export async function POST(request: NextRequest) {
   try {
-    // Проверяем права админа
-    const adminIds = process.env.ADMIN_IDS?.split(",").map(id => id.trim()) || [];
-    const adminUsernames = process.env.ADMIN_USERNAMES?.split(",").map(username => username.trim()) || [];
+    const { telegramId, amount, username } = await request.json();
     
-    if (!adminIds.includes(telegramId) && !adminUsernames.includes(telegramId)) {
-      return NextResponse.json({ error: 'Access denied' }, { status: 403 });
+    if (!telegramId || !amount || !username) {
+      return NextResponse.json({ error: 'telegramId, amount and username required' }, { status: 400 });
     }
     
-    const users = await prisma.user.findMany({
-      include: {
-        games: {
-          take: 5,
-          orderBy: { createdAt: 'desc' }
-        },
-        withdrawRequests: {
-          where: { status: 'pending' },
-          take: 5
-        }
-      },
-      orderBy: { createdAt: 'desc' }
+    const user = await prisma.user.findUnique({
+      where: { telegramId: String(telegramId) }
     });
     
-    return NextResponse.json({ users });
+    if (!user) {
+      return NextResponse.json({ error: 'User not found' }, { status: 404 });
+    }
+    
+    if (user.balance < amount) {
+      return NextResponse.json({ error: 'Insufficient balance' }, { status: 400 });
+    }
+    
+    if (amount < 100) {
+      return NextResponse.json({ error: 'Minimum withdrawal amount is 100' }, { status: 400 });
+    }
+    
+    // Создаем запрос на вывод
+    const withdrawRequest = await prisma.withdrawRequest.create({
+      data: {
+        userId: user.id,
+        amount,
+        username
+      }
+    });
+    
+    return NextResponse.json({ 
+      success: true, 
+      requestId: withdrawRequest.id 
+    });
     
   } catch (error) {
-    console.error('Admin users error:', error);
+    console.error('Withdraw error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 } 
